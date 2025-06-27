@@ -15,13 +15,11 @@ build/
 
 # Rust related
 target/
-*.a
 *.so
 *.dylib
 *.dll
 *.wasm
 *.zip
-*.xcframework/
 isar-dart.h
 
 # Android related
