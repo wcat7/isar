@@ -12,9 +12,11 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  isar: 
-    version: 0.0.0-placeholder
-    hosted: https://pub.isar-community.dev/
+  isar:
+    git:
+      url: https://github.com/wcat7/isar.git
+      path: packages/isar
+      ref: 4.0.3-fix
 
 flutter:
   plugin:
