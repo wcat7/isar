@@ -15,9 +15,6 @@ build/
 
 # Rust related
 target/
-*.so
-*.dylib
-*.dll
 *.wasm
 *.zip
 isar-dart.h
