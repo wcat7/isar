@@ -1,54 +1,63 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
-if [[ "$(uname -s)" == "Darwin" ]]; then
-    export NDK_HOST_TAG="darwin-x86_64"
-elif [[ "$(uname -s)" == "Linux" ]]; then
-    export NDK_HOST_TAG="linux-x86_64"
+set -e  # fail on error
+set -x  # verbose mode
+
+# Auto-detect Android NDK
+if [[ -n "$ANDROID_NDK_HOME" && -d "$ANDROID_NDK_HOME" ]]; then
+    NDK="$ANDROID_NDK_HOME"
+elif [[ -n "$ANDROID_SDK_ROOT" && -d "$ANDROID_SDK_ROOT/ndk" ]]; then
+    NDK=$(ls -d "$ANDROID_SDK_ROOT/ndk/"* | sort -V | tail -n 1)
+elif [[ -d "$HOME/Library/Android/sdk/ndk" ]]; then
+    NDK=$(ls -d "$HOME/Library/Android/sdk/ndk/"* | sort -V | tail -n 1)
 else
-    echo "Unsupported OS."
-    exit
+    echo "❌ Android NDK not found. Install via Android Studio > SDK Manager."
+    exit 1
 fi
 
-NDK=${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-"$ANDROID_SDK_ROOT/ndk"}}
-COMPILER_DIR="$NDK/toolchains/llvm/prebuilt/$NDK_HOST_TAG/bin"
-export PATH="$COMPILER_DIR:$PATH"
+# Required by isar build.rs
+export ANDROID_NDK_HOME="$NDK"
 
-echo "$COMPILER_DIR"
+# Detect host system
+case "$(uname -s)" in
+    Darwin) HOST_TAG="darwin-x86_64" ;;
+    Linux)  HOST_TAG="linux-x86_64" ;;
+    *) echo "❌ Unsupported OS"; exit 1 ;;
+esac
 
-export CC_x86_64_linux_android=$COMPILER_DIR/x86_64-linux-android21-clang
-export AR_x86_64_linux_android=$COMPILER_DIR/llvm-ar
-export CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER=$COMPILER_DIR/x86_64-linux-android21-clang
-export CARGO_TARGET_X86_64_LINUX_ANDROID_AR=$COMPILER_DIR/llvm-ar
-ln -s "$AR_x86_64_linux_android" "$COMPILER_DIR/x86_64-linux-android-ranlib"
+TOOLCHAIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/$HOST_TAG/bin"
+export PATH="$TOOLCHAIN:$PATH"
 
-export CC_armv7_linux_androideabi=$COMPILER_DIR/armv7a-linux-androideabi21-clang
-export AR_armv7_linux_androideabi=$COMPILER_DIR/llvm-ar
-export CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER=$COMPILER_DIR/armv7a-linux-androideabi21-clang
-export CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_AR=$COMPILER_DIR/llvm-ar
-ln -s "$AR_armv7_linux_androideabi" "$COMPILER_DIR/arm-linux-androideabi-ranlib"
+# Build arm64-v8a only
+echo "=== Building Android (arm64-v8a) ==="
+TARGET="aarch64-linux-android"
+API=21
 
-export CC_aarch64_linux_android=$COMPILER_DIR/aarch64-linux-android21-clang
-export AR_aarch64_linux_android=$COMPILER_DIR/llvm-ar
-export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$COMPILER_DIR/aarch64-linux-android21-clang
-export CARGO_TARGET_AARCH64_LINUX_ANDROID_AR=$COMPILER_DIR/llvm-ar
-ln -s "$AR_aarch64_linux_android" "$COMPILER_DIR/aarch64-linux-android-ranlib"
+export CC="$TOOLCHAIN/${TARGET}${API}-clang"
+export AR="$TOOLCHAIN/llvm-ar"
 
-if [ "$1" = "x64" ]; then
-  rustup target add x86_64-linux-android
-  cargo build --target x86_64-linux-android --features sqlcipher-vendored --release
-  mv "target/x86_64-linux-android/release/libisar.so" "libisar_android_x64.so"
-elif [ "$1" = "armv7" ]; then
-  rustup target add armv7-linux-androideabi
-  cargo build --target armv7-linux-androideabi --features sqlcipher-vendored --release
-  mv "target/armv7-linux-androideabi/release/libisar.so" "libisar_android_armv7.so"
-else
-  rustup target add aarch64-linux-android
-  cargo build --target aarch64-linux-android --features sqlcipher-vendored --release
-  mv "target/aarch64-linux-android/release/libisar.so" "libisar_android_arm64.so"
-fi
+# Normalize env key
+TARGET_ENV=$(echo "$TARGET" | tr '[:lower:]' '[:upper:]' | tr '-' '_')
+export CARGO_TARGET_${TARGET_ENV}_LINKER="$CC"
+export CARGO_TARGET_${TARGET_ENV}_AR="$AR"
 
+# Required for bindgen/mdbx
+export BINDGEN_EXTRA_CLANG_ARGS="--sysroot=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/$HOST_TAG/sysroot"
 
+rustup target add "$TARGET"
 
+# Clean previous build to ensure fresh compilation
+echo "=== Cleaning previous build ==="
+cargo clean --target "$TARGET"
 
+# Build
+echo "=== Compiling ==="
+cargo build --target "$TARGET" --release --features sqlcipher-vendored
 
+# Copy to Flutter plugin final location (overwrite if exists)
+FLUTTER_ANDROID_DIR="packages/isar_flutter_libs/android/src/main/jniLibs/arm64-v8a"
+mkdir -p "$FLUTTER_ANDROID_DIR"
+cp -f "target/$TARGET/release/libisar.so" "$FLUTTER_ANDROID_DIR/libisar.so"
 
+echo "=== Done ==="
+echo "📦 Output: $FLUTTER_ANDROID_DIR/libisar.so"
